@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -22,45 +24,19 @@ func init() {
 }
 
 func main() {
+}
+
+func handleRequest(ctx context.Context, event json.RawMessage) error {
 
 	type Newfile struct {
 		Detail struct {
+			Bucket struct {
+				Name string `json:"name"`
+			} `json:"bucket"`
 			Object struct {
 				Key string `json:"key"`
 			} `json:"object"`
 		} `json:"detail"`
-	}
-
-	var newfile Newfile
-
-	filejson, err := os.ReadFile("s3.json")
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	err = json.Unmarshal([]byte(filejson), &newfile)
-
-	fmt.Println(newfile.Detail.Object)
-
-	//_, err := client.ListObjectsV2()
-}
-
-// func uploadToS3() {
-// 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
-// 		Bucket: "test",
-// 		Key:    "test",
-// 		Body:   "test",
-// 	})
-// 	if err != nil {
-// 		log.Fatalf("File upload failed: %v", err)
-// 	}
-// }
-
-func handleRequest(ctx context.Context, event json.RawMessage) error {
-
-	filejson, err := os.ReadFile("data.json")
-	if err != nil {
-		fmt.Println(err)
 	}
 
 	type Record struct {
@@ -71,8 +47,30 @@ func handleRequest(ctx context.Context, event json.RawMessage) error {
 	}
 
 	var record Record
+	var newfile Newfile
+	outputbucket := newfile.Detail.Bucket.Name + "-output"
 
-	err = json.Unmarshal([]byte(filejson), &record)
+	err := json.Unmarshal([]byte(event), &newfile)
+	if err != nil {
+		fmt.Printf("Problem loading filename. %s\n", err)
+	}
+
+	fileInput := &s3.GetObjectInput{
+		Bucket: aws.String(newfile.Detail.Bucket.Name),
+		Key:    aws.String(newfile.Detail.Object.Key),
+	}
+
+	file, err := client.GetObject(ctx, fileInput)
+	if err != nil {
+		fmt.Printf("JSON failed to be parsed. %s\n", err)
+	}
+
+	// capture all bytes from upload
+	body, err := io.ReadAll(file.Body)
+	if err != nil {
+		panic(err)
+	}
+	err = json.Unmarshal([]byte(body), &record)
 	if err != nil {
 		fmt.Printf("JSON failed to be parsed. %s\n", err)
 	}
@@ -98,7 +96,11 @@ func handleRequest(ctx context.Context, event json.RawMessage) error {
 		fmt.Printf("JSON failed to be parsed. %s\n", err)
 	}
 
-	err = os.WriteFile("anondata.json", jsonOutput, 0644)
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(outputbucket),
+		Key:    aws.String(newfile.Detail.Object.Key),
+		Body:   bytes.NewReader(jsonOutput),
+	})
 	if err != nil {
 		fmt.Printf("Error writing file: %s\n", err)
 	}
